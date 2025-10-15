@@ -410,8 +410,30 @@ export const useGame = (options: UseGameOptions = {}) => {
     }
 
     const handleGameError = (data: any) => {
-      console.error(' Game error:', data)
-      options.onError?.(data.message || 'Game error occurred')
+      console.error('⚠️ Game error received:', {
+        errorData: data,
+        errorMessage: data?.message,
+        errorGameId: data?.gameId,
+        currentGameId: gameState.gameId,
+        gameStatus: gameState.gameStatus
+      })
+      
+      // Ignore errors from old games that we're no longer in
+      if (data?.gameId && gameState.gameId && data.gameId !== gameState.gameId) {
+        console.log('🔇 Ignoring error from old game:', data.gameId, '(current:', gameState.gameId, ')')
+        return
+      }
+      
+      // Ignore errors when we're not in a game (lobby state)
+      if (gameState.gameStatus === 'lobby' || !gameState.gameId) {
+        console.log('🔇 Ignoring error - not in active game (status:', gameState.gameStatus, ')')
+        return
+      }
+      
+      // Only show error if it's for the current game
+      if (data?.message) {
+        options.onError?.(data.message)
+      }
     }
 
     const handleCountdownUpdate = (data: any) => {
@@ -563,22 +585,29 @@ export const useGame = (options: UseGameOptions = {}) => {
   }, [connected, publicKey, socket.emit, options, anchorCreateGame, refreshBalance])
 
   const joinGame = useCallback(async (gameId?: string, currency: 'points' | 'sol' = 'points', stakeAmount: number = 100) => {
+    console.log('🎮 joinGame called with:', { gameId, currency, stakeAmount })
+    
     if (!publicKey || !socket.emit) {
-      console.error('No wallet or socket available for joining game')
+      console.error('❌ No wallet or socket available for joining game')
       return
     }
 
     const currentPlayerId = publicKey.toString().slice(0, 8)
+    console.log('👤 Current player ID:', currentPlayerId)
 
     try {
       if (gameId) {
-        console.log('Joining game:', gameId)
+        console.log('🔍 Joining specific game:', gameId)
         
         // First, get the game details to check if it's a SOL game
+        console.log('📡 Fetching game details from backend...')
         const response = await fetch(`http://localhost:3001/api/games/${gameId}`)
         const gameData = await response.json()
         
+        console.log('📦 Game data received:', gameData)
+        
         if (!gameData.success || !gameData.game) {
+          console.error('❌ Game not found')
           options.onError?.('Game not found')
           return
         }
@@ -586,11 +615,12 @@ export const useGame = (options: UseGameOptions = {}) => {
         const actualCurrency = gameData.game.currency
         const actualStakeAmount = gameData.game.stakeAmount
         
-        console.log('Game details:', { currency: actualCurrency, stakeAmount: actualStakeAmount })
+        console.log('💰 Game details:', { currency: actualCurrency, stakeAmount: actualStakeAmount })
         
         // If it's a SOL game, stake SOL BEFORE joining the backend game
         if (actualCurrency === 'sol') {
           console.log('🔗 SOL game detected - staking SOL before joining...')
+          console.log('🔗 Calling anchorJoinGame with gameId:', gameId)
           try {
             await anchorJoinGame(gameId)
             console.log('✅ SOL staked successfully before joining')

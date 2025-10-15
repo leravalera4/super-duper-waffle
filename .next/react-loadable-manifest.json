@@ -1,4 +1,8 @@
 {
+  "hooks/use-anchor-program.ts -> @solana/web3.js": {
+    "id": "hooks/use-anchor-program.ts -> @solana/web3.js",
+    "files": []
+  },
   "node_modules/@particle-network/auth/es/index.js -> draggabilly": {
     "id": "node_modules/@particle-network/auth/es/index.js -> draggabilly",
     "files": []

@@ -8,53 +8,6 @@
   },
   "instructions": [
     {
-      "name": "cancel_game",
-      "discriminator": [
-        121,
-        194,
-        154,
-        118,
-        103,
-        235,
-        149,
-        52
-      ],
-      "accounts": [
-        {
-          "name": "game",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  103,
-                  97,
-                  109,
-                  101
-                ]
-              },
-              {
-                "kind": "arg",
-                "path": "game_id"
-              }
-            ]
-          }
-        },
-        {
-          "name": "user",
-          "writable": true,
-          "signer": true
-        }
-      ],
-      "args": [
-        {
-          "name": "_game_id",
-          "type": "string"
-        }
-      ]
-    },
-    {
       "name": "commit_move",
       "discriminator": [
         27,
@@ -450,40 +403,6 @@
               }
             ]
           }
-        },
-        {
-          "name": "player1_profile",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  117,
-                  115,
-                  101,
-                  114,
-                  95,
-                  112,
-                  114,
-                  111,
-                  102,
-                  105,
-                  108,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "game.player1",
-                "account": "Game"
-              }
-            ]
-          }
-        },
-        {
-          "name": "player1",
-          "writable": true
         },
         {
           "name": "user",
@@ -896,16 +815,6 @@
       "code": 6018,
       "name": "ReferrerAlreadySet",
       "msg": "Referrer already set"
-    },
-    {
-      "code": 6019,
-      "name": "UnauthorizedAction",
-      "msg": "Unauthorized action"
-    },
-    {
-      "code": 6020,
-      "name": "GameNotCancellable",
-      "msg": "Game not cancellable"
     }
   ],
   "types": [

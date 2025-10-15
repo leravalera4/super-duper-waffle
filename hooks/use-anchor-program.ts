@@ -588,6 +588,29 @@ export const useAnchorProgram = (options: UseAnchorProgramOptions = {}) => {
       onComplete?.()
       return false
     }
+    
+    // Check wallet state - wallet object might be the adapter itself
+    console.log('🔍 Checking wallet state:', {
+      hasWallet: !!wallet,
+      hasAdapter: !!wallet?.adapter,
+      adapterName: wallet?.adapter?.name,
+      readyState: wallet?.adapter?.readyState,
+      hasPublicKey: !!wallet?.publicKey,
+      hasSignTransaction: !!wallet?.signTransaction,
+      hasSignAllTransactions: !!wallet?.signAllTransactions,
+      walletName: wallet?.wallet?.adapter?.name || 'unknown'
+    })
+    
+    // Check if wallet has necessary signing methods (it might be the adapter itself)
+    if (!wallet?.signTransaction || !wallet?.signAllTransactions) {
+      const error = 'Wallet signing methods not available. Please reconnect your wallet.'
+      console.error('❌', error)
+      options.onError?.(error)
+      onComplete?.()
+      return false
+    }
+    
+    console.log('✅ Wallet has signing methods, proceeding...')
 
     try {
       console.log('🔗 Joining game on-chain:', gameId)
@@ -596,7 +619,7 @@ export const useAnchorProgram = (options: UseAnchorProgramOptions = {}) => {
       const gamePDA = findGamePDA(gameId)
       const userProfilePDA = findUserProfilePDA(publicKey)
       
-      // Create an AnchorProvider
+      // Create an AnchorProvider (same as createGame does)
       const provider = new anchor.AnchorProvider(
         connection,
         wallet as any,
@@ -608,44 +631,179 @@ export const useAnchorProgram = (options: UseAnchorProgramOptions = {}) => {
       idl.address = PROGRAM_ID.toString()
       const program = new anchor.Program(idl, provider)
       
-      console.log('Joining game with accounts:', {
-        game: gamePDA.toString(),
-        userProfile: userProfilePDA.toString(),
-        user: publicKey.toString()
-      })
+      // Check if user profile exists, if not initialize it first (same as createGame)
+      console.log('🔍 Checking if user profile exists:', userProfilePDA.toString())
+      try {
+        const profileAccount = await connection.getAccountInfo(userProfilePDA)
+        if (!profileAccount) {
+          console.log('👤 User profile does not exist, initializing first...')
+          // Initialize user profile first
+          const initTx = await program.methods
+            .initializeUserProfile()
+            .accounts({
+              userProfile: userProfilePDA,
+              user: publicKey,
+              systemProgram: SystemProgram.programId
+            })
+            .transaction()
+          
+          console.log('📝 Initializing user profile...')
+          const initSignature = await sendTransaction(initTx, connection)
+          const initConfirmation = await connection.confirmTransaction(initSignature, 'confirmed')
+          
+          if (initConfirmation.value.err) {
+            throw new Error('Failed to initialize user profile: ' + initConfirmation.value.err)
+          }
+          
+          console.log('✅ User profile initialized successfully:', initSignature)
+        } else {
+          console.log('✅ User profile already exists')
+        }
+      } catch (profileError) {
+        console.error('Error checking/initializing user profile:', profileError)
+        throw new Error('Failed to setup user profile: ' + (profileError as Error).message)
+      }
       
-      // Join the game
-      const tx = await program.methods
+      console.log('Joining game with correct accounts (no player1/player1_profile):')
+      console.log('  - game:', gamePDA.toString())
+      console.log('  - userProfile:', userProfilePDA.toString())
+      console.log('  - user:', publicKey.toString())
+      
+      // Build the transaction instruction with CORRECT accounts (matching updated IDL)
+      console.log('Building join game instruction...')
+      
+      const instruction = await program.methods
         .joinGame(gameId)
-        .accounts({
+        .accountsStrict({
           game: gamePDA,
           userProfile: userProfilePDA,
           user: publicKey,
           systemProgram: SystemProgram.programId
         })
-        .transaction()
+        .instruction()
       
-      // Send the transaction
-      const signature = await sendTransaction(tx, connection)
+      console.log('Instruction built, creating VERSIONED transaction...')
       
-      // Wait for confirmation
-      const confirmation = await connection.confirmTransaction(signature, 'confirmed')
+      // Use VersionedTransaction with manual ComputeBudget setup
+      const { TransactionMessage, VersionedTransaction, ComputeBudgetProgram } = await import('@solana/web3.js')
       
-      if (confirmation.value.err) {
-        console.error('Transaction confirmed but failed:', confirmation.value.err)
-        options.onError?.('Failed to join game on-chain')
-        onComplete?.()
-        throw new Error('Transaction failed: ' + confirmation.value.err)
+      // Get recent blockhash
+      const { blockhash } = await connection.getLatestBlockhash('confirmed')
+      
+      // Add ComputeBudget instructions FIRST (like wallet would do)
+      // This ensures correct instruction ordering
+      const computeUnitsIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 })
+      const computePriceIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1 })
+      
+      // Create message with ALL instructions in correct order
+      const message = new TransactionMessage({
+        payerKey: publicKey,
+        recentBlockhash: blockhash,
+        instructions: [
+          computeUnitsIx,   // #0
+          computePriceIx,   // #1  
+          instruction       // #2 - JoinGame
+        ]
+      }).compileToV0Message()
+      
+      console.log('✅ Transaction message created with 3 instructions (2 ComputeBudget + 1 JoinGame)')
+      
+      // Create versioned transaction
+      const tx = new VersionedTransaction(message)
+      
+      console.log('Versioned transaction created')
+      console.log('  - message compiled successfully')
+      
+      // Sign and send transaction manually using wallet methods
+      console.log('Signing versioned transaction with wallet...')
+      
+      let signature: string
+      try {
+        // Sign the transaction first
+        if (!wallet.signTransaction) {
+          throw new Error('Wallet does not support signTransaction')
+        }
+        
+        console.log('Requesting wallet to sign versioned transaction...')
+        const signedTx = await wallet.signTransaction(tx)
+        console.log('✅ Versioned transaction signed, signatures:', signedTx.signatures.length)
+        
+        // Send the signed transaction with RPC options
+        console.log('Sending signed versioned transaction to network...')
+        
+        const rawTx = signedTx.serialize()
+        console.log('Serialized transaction length:', rawTx.length)
+        
+        // Try WITHOUT preflight first to see if it goes through
+        signature = await connection.sendRawTransaction(rawTx, {
+          skipPreflight: true,  // Skip simulation - just send it!
+          maxRetries: 3
+        })
+        console.log('✅ Transaction sent successfully (no preflight), signature:', signature)
+        
+        // IMPORTANT: Wait for confirmation before proceeding
+        console.log('⏳ Waiting for transaction confirmation...')
+        const confirmation = await connection.confirmTransaction(signature, 'confirmed')
+        
+        if (confirmation.value.err) {
+          throw new Error('Transaction failed on-chain: ' + JSON.stringify(confirmation.value.err))
+        }
+        
+        console.log('✅ Transaction confirmed on-chain!')
+      } catch (sendError: any) {
+        console.error('❌ SendTransaction error:', sendError)
+        console.error('Error name:', sendError.name)
+        console.error('Error message:', sendError.message)
+        console.error('Error stack:', sendError.stack)
+        console.error('Error object keys:', Object.keys(sendError))
+        console.error('Full error object:', JSON.stringify(sendError, null, 2))
+        
+        // Try to extract more details
+        if (sendError.logs) {
+          console.error('Transaction logs:', sendError.logs)
+        }
+        if (sendError.err) {
+          console.error('Transaction error details:', sendError.err)
+        }
+        if (sendError.error) {
+          console.error('Inner error:', sendError.error)
+        }
+        
+        // Check wallet adapter error
+        console.error('Wallet adapter:', wallet?.adapter?.name)
+        console.error('Wallet ready:', wallet?.adapter?.readyState)
+        
+        throw sendError
       }
       
-      console.log('Game joined on-chain:', signature)
+      console.log('✅ Game joined on-chain, transaction signature:', signature)
+      
+      // Wait for confirmation
+      await connection.confirmTransaction(signature, 'confirmed')
+      
+      console.log('✅ Transaction confirmed')
       options.onSuccess?.('Game joined successfully! Stake transferred automatically.')
       
       onComplete?.()
       return true
-    } catch (error) {
-      console.error('Error joining game on-chain:', error)
-      options.onError?.('Failed to join game on-chain. Please try again later.')
+    } catch (error: any) {
+      console.error('❌ Error joining game on-chain:', error)
+      console.error('Error type:', typeof error)
+      console.error('Error constructor:', error?.constructor?.name)
+      
+      let errorMessage = 'Unknown error'
+      
+      if (error?.message) {
+        errorMessage = error.message
+      }
+      
+      if (error?.logs) {
+        console.error('Program logs:', error.logs)
+        errorMessage += '\nCheck console for program logs'
+      }
+      
+      console.error('Final error message:', errorMessage)
+      options.onError?.(`Failed to join game on-chain: ${errorMessage}`)
       onComplete?.()
       throw error // Re-throw the error
     }

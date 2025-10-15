@@ -12,10 +12,15 @@
       "static/css/app/page.css",
       "static/chunks/app/page.js"
     ],
-    "/api/games/stats/route": [
+    "/game/[gameId]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/api/games/stats/route.js"
+      "static/chunks/app/game/[gameId]/page.js"
+    ],
+    "/_not-found/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/_not-found/page.js"
     ]
   }
 }
